@@ -63,7 +63,7 @@ export default function AuthPage() {
         identifier: form.identifier,
         password: form.password,
       });
-      saveAuth(res.data.token, res.data.user);
+      saveAuth(res.data.user);
       toast.success(`Welcome back, ${res.data.user.name}!`);
       navigate('/dashboard');
     } catch (err) {
@@ -92,7 +92,7 @@ export default function AuthPage() {
     setBusy(true);
     try {
       const res = await authAPI.verifyOTP(form.identifier, form.otp, 'login');
-      saveAuth(res.data.token, res.data.user);
+      saveAuth(res.data.user);
       toast.success(`Welcome, ${res.data.user.name}!`);
       navigate('/dashboard');
     } catch (err) {
@@ -106,7 +106,7 @@ export default function AuthPage() {
     setBusy(true);
     try {
       const res = await authAPI.verifyOTP(form.identifier, form.otp, 'verify_email');
-      saveAuth(res.data.token, res.data.user);
+      saveAuth(res.data.user);
       toast.success('Email verified! Welcome to ShopNest 🎉');
       navigate('/dashboard');
     } catch (err) {
@@ -119,7 +119,7 @@ export default function AuthPage() {
     setBusy(true);
     try {
       const res = await authAPI.googleToken(credentialResponse.credential);
-      saveAuth(res.data.token, res.data.user);
+      saveAuth(res.data.user);
       toast.success(`Welcome, ${res.data.user.name}!`);
       navigate('/dashboard');
     } catch (err) {
@@ -128,7 +128,8 @@ export default function AuthPage() {
   }
 
   return (
-    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}
+    onScriptLoadError={() => console.log('Google script failed')}>
       <div className="auth-root">
         {/* Left Panel */}
         <div className="auth-left">
@@ -249,6 +250,8 @@ export default function AuthPage() {
                     size="large"
                     text="signin_with"
                     width="100%"
+                    useOneTap={false}      // ← Add this line
+                    cancel_on_tap_outside={false}
                   />
                 </div>
 
