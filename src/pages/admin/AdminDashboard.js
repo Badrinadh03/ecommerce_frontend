@@ -26,6 +26,9 @@ export default function AdminDashboard() {
   const [editId, setEditId] = useState(null);
   const [previewImgs, setPreviewImgs] = useState([]);
   const [search, setSearch] = useState('');
+  const [analytics, setAnalytics] = useState(null);
+  const [analyticsWindow, setAnalyticsWindow] = useState(7);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const fileRef = useRef();
 
   useEffect(() => {
@@ -49,6 +52,59 @@ export default function AdminDashboard() {
       setStats(res.data);
     } catch {}
   }
+
+  async function fetchAnalytics(days) {
+    setAnalyticsLoading(true);
+    try {
+      const res = await adminAPI.getAnalytics(days);
+      setAnalytics(res.data);
+    } catch { toast.error('Analytics not available. Run jobs first.'); }
+    finally { setAnalyticsLoading(false); }
+  }
+
+  // ── Job trigger + polling ─────────────────
+  const [jobStatuses, setJobStatuses] = useState({});
+  const [jobPolling, setJobPolling] = useState(false);
+  const pollRef = React.useRef(null);
+
+  async function triggerJob(label, apiFn) {
+    try {
+      const res = await apiFn();
+      const jobs = res.data.jobs || [res.data.job];
+      toast.success(`${label} started on server!`);
+      startPolling(jobs);
+    } catch (err) {
+      toast.error(err.response?.data?.error || `Failed to start ${label}`);
+    }
+  }
+
+  function startPolling(jobNames) {
+    setJobPolling(true);
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await adminAPI.getAllJobStatuses();
+        const statuses = res.data;
+        setJobStatuses(statuses);
+        const relevant = jobNames.filter(j => statuses[j]);
+        const allDone  = relevant.length > 0 && relevant.every(j => statuses[j]?.status !== 'running');
+        if (allDone) {
+          clearInterval(pollRef.current);
+          setJobPolling(false);
+          const anyError = relevant.some(j => statuses[j]?.status === 'error');
+          if (anyError) {
+            toast.error('One or more jobs failed. Check server logs.');
+          } else {
+            toast.success('All jobs completed! Loading results...');
+            setTimeout(() => fetchAnalytics(analyticsWindow), 800);
+          }
+        }
+      } catch { clearInterval(pollRef.current); setJobPolling(false); }
+    }, 2500);
+  }
+
+  // Cleanup polling on unmount
+  React.useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   function set(key, val) { setForm(f => ({ ...f, [key]: val })); }
 
@@ -147,7 +203,7 @@ export default function AdminDashboard() {
           <span className="adm-badge">ADMIN</span>
         </div>
         <nav className="adm-nav">
-          {[['products', '📦 Products'], ['add', editId ? '✏️ Edit' : '➕ Add Product'], ['stats', '📊 Stats']].map(([key, label]) => (
+          {[['products', '📦 Products'], ['add', editId ? '✏️ Edit' : '➕ Add Product'], ['stats', '📊 Stats'], ['analytics', '🔥 Analytics']].map(([key, label]) => (
             <button key={key} className={tab === key ? 'adm-tab active' : 'adm-tab'}
               onClick={() => { setTab(key); if (key !== 'add') { setEditId(null); setForm(EMPTY_FORM); setPreviewImgs([]); } }}>
               {label}
@@ -249,6 +305,238 @@ export default function AdminDashboard() {
                   </tbody>
                 </table>
               </div>
+            )}
+          </div>
+        )}
+
+        {/* ── ANALYTICS TAB (Kafka + PySpark results) ── */}
+        {tab === 'analytics' && (
+          <div className="analytics-tab">
+            <div className="analytics-header">
+              <h2 className="analytics-title">🔥 Kafka &amp; PySpark Analytics</h2>
+              <div className="analytics-controls">
+                <select className="window-select" value={analyticsWindow}
+                  onChange={e => setAnalyticsWindow(Number(e.target.value))}>
+                  <option value={7}>Last 7 days</option>
+                  <option value={30}>Last 30 days</option>
+                  <option value={90}>Last 90 days</option>
+                </select>
+                <button className="fetch-analytics-btn"
+                  onClick={() => fetchAnalytics(analyticsWindow)} disabled={analyticsLoading}>
+                  {analyticsLoading ? <span className="adm-spin" /> : '📊 Load Results'}
+                </button>
+              </div>
+            </div>
+
+            {/* ── Job Trigger Panel ── */}
+            <div className="job-trigger-panel">
+              <div className="job-trigger-title">
+                <span>⚙️ Run Analytics Jobs on Server</span>
+                {jobPolling && <span className="job-polling-badge">⏳ Polling...</span>}
+              </div>
+              <div className="job-trigger-grid">
+
+                <div className="job-card">
+                  <div className="job-card-icon">📈</div>
+                  <div className="job-card-info">
+                    <strong>Sales Report</strong>
+                    <span>Revenue, top products, daily chart</span>
+                  </div>
+                  <div className="job-card-right">
+                    <JobStatusBadge status={jobStatuses[`sales_report_${analyticsWindow}d`]?.status} />
+                    <button className="job-run-btn"
+                      disabled={jobPolling}
+                      onClick={() => triggerJob('Sales Report', () => adminAPI.runSalesReport(analyticsWindow))}>
+                      ▶ Run
+                    </button>
+                  </div>
+                </div>
+
+                <div className="job-card">
+                  <div className="job-card-icon">🤝</div>
+                  <div className="job-card-info">
+                    <strong>Recommendations</strong>
+                    <span>Frequently bought together</span>
+                  </div>
+                  <div className="job-card-right">
+                    <JobStatusBadge status={jobStatuses['recommendations']?.status} />
+                    <button className="job-run-btn"
+                      disabled={jobPolling}
+                      onClick={() => triggerJob('Recommendations', adminAPI.runRecommendations)}>
+                      ▶ Run
+                    </button>
+                  </div>
+                </div>
+
+                <div className="job-card">
+                  <div className="job-card-icon">👥</div>
+                  <div className="job-card-info">
+                    <strong>User Funnel</strong>
+                    <span>VIP / Repeat / One-time segments</span>
+                  </div>
+                  <div className="job-card-right">
+                    <JobStatusBadge status={jobStatuses['user_funnel']?.status} />
+                    <button className="job-run-btn"
+                      disabled={jobPolling}
+                      onClick={() => triggerJob('User Funnel', adminAPI.runFunnel)}>
+                      ▶ Run
+                    </button>
+                  </div>
+                </div>
+
+                <div className="job-card job-card-all">
+                  <div className="job-card-icon">🚀</div>
+                  <div className="job-card-info">
+                    <strong>Run All Jobs</strong>
+                    <span>Sales + Recommendations + Funnel at once</span>
+                  </div>
+                  <div className="job-card-right">
+                    <button className="job-run-btn job-run-all"
+                      disabled={jobPolling}
+                      onClick={() => triggerJob('All Jobs', () => adminAPI.runAllJobs(analyticsWindow))}>
+                      {jobPolling ? <span className="adm-spin" /> : '▶▶ Run All'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="job-card job-card-backfill">
+                  <div className="job-card-icon">🔄</div>
+                  <div className="job-card-info">
+                    <strong>Backfill Existing Orders</strong>
+                    <span>Populate analytics_events &amp; inventory_log from all past orders</span>
+                  </div>
+                  <div className="job-card-right">
+                    <JobStatusBadge status={jobStatuses['backfill']?.status} />
+                    <button className="job-run-btn job-run-backfill"
+                      disabled={jobPolling}
+                      onClick={() => triggerJob('Backfill', adminAPI.backfillEvents)}>
+                      ▶ Backfill
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+            {/* ── Results Section ── */}
+            {!analytics && !analyticsLoading && (
+              <div className="analytics-empty">
+                <div className="analytics-empty-icon">📊</div>
+                <h3>No Results Yet</h3>
+                <p>Click <strong>▶ Run</strong> on any job above to generate analytics on the server, then click <strong>Load Results</strong>.</p>
+                <p className="analytics-hint">Jobs run in the background — results auto-load when complete.</p>
+              </div>
+            )}
+
+            {analyticsLoading && (
+              <div className="analytics-loading">
+                <span className="adm-spin large-spin" />
+                <p>Loading results from MongoDB...</p>
+              </div>
+            )}
+
+            {analytics && !analyticsLoading && (
+              <>
+                {analytics.kpis && Object.keys(analytics.kpis).length > 0 ? (
+                  <div className="kpi-grid">
+                    {[
+                      { label: 'Gross Revenue',     value: `$${(analytics.kpis.gross_revenue || 0).toFixed(2)}`,   icon: '💰', color: '#6ee7b7' },
+                      { label: 'Total Orders',       value: analytics.kpis.total_orders || 0,                       icon: '🛒', color: '#818cf8' },
+                      { label: 'Avg Order Value',    value: `$${(analytics.kpis.avg_order_value || 0).toFixed(2)}`, icon: '📈', color: '#fb923c' },
+                      { label: 'Unique Customers',   value: analytics.kpis.unique_customers || 0,                   icon: '👥', color: '#f472b6' },
+                    ].map(k => (
+                      <div className="kpi-card" key={k.label} style={{ '--kc': k.color }}>
+                        <div className="kpi-icon">{k.icon}</div>
+                        <div className="kpi-val">{k.value}</div>
+                        <div className="kpi-lbl">{k.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="analytics-no-data">
+                    <p>⚠️ {analytics.message || 'No data. Run jobs above first.'}</p>
+                  </div>
+                )}
+
+                {(analytics.revenue_by_category || []).length > 0 && (
+                  <div className="analytics-section">
+                    <h3 className="analytics-section-title">📂 Revenue by Category</h3>
+                    <div className="category-bars">
+                      {(() => {
+                        const maxRev = Math.max(...analytics.revenue_by_category.map(c => c.revenue));
+                        return analytics.revenue_by_category.map(cat => (
+                          <div key={cat.category} className="cat-bar-row">
+                            <span className="cat-bar-label">{cat.category}</span>
+                            <div className="cat-bar-track">
+                              <div className="cat-bar-fill" style={{ width: `${(cat.revenue / maxRev) * 100}%` }} />
+                            </div>
+                            <span className="cat-bar-val">${cat.revenue.toFixed(0)}</span>
+                            <span className="cat-bar-units">{cat.units_sold} units</span>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                )}
+
+                {(analytics.daily_revenue || []).length > 0 && (
+                  <div className="analytics-section">
+                    <h3 className="analytics-section-title">📅 Daily Revenue</h3>
+                    <div className="daily-chart">
+                      {(() => {
+                        const maxDay = Math.max(...analytics.daily_revenue.map(d => d.revenue));
+                        return analytics.daily_revenue.map(day => (
+                          <div key={day.date} className="day-col">
+                            <div className="day-bar-wrap">
+                              <div className="day-bar"
+                                style={{ height: `${maxDay > 0 ? (day.revenue / maxDay) * 100 : 0}%` }}
+                                title={`$${day.revenue.toFixed(2)} — ${day.orders} orders`} />
+                            </div>
+                            <span className="day-label">{day.date.slice(5)}</span>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                )}
+
+                {(analytics.top_products || []).length > 0 && (
+                  <div className="analytics-section">
+                    <h3 className="analytics-section-title">🏆 Top Selling Products</h3>
+                    <div className="top-products-list">
+                      {analytics.top_products.slice(0, 10).map((p, i) => (
+                        <div key={p.product_id} className="top-prod-row">
+                          <span className="top-prod-rank">#{i + 1}</span>
+                          <span className="top-prod-name">{p.product_name}</span>
+                          <span className="top-prod-cat">{p.category}</span>
+                          <span className="top-prod-units">{p.units_sold} sold</span>
+                          <span className="top-prod-rev">${p.revenue.toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {analytics.status_distribution && Object.keys(analytics.status_distribution).length > 0 && (
+                  <div className="analytics-section">
+                    <h3 className="analytics-section-title">📦 Order Status Distribution</h3>
+                    <div className="status-dist-grid">
+                      {Object.entries(analytics.status_distribution).map(([status, count]) => (
+                        <div key={status} className={`status-dist-card status-${status}`}>
+                          <div className="status-dist-count">{count}</div>
+                          <div className="status-dist-label">{status}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <p className="analytics-generated">
+                  Engine: <strong>{analytics.engine || 'pymongo'}</strong>
+                  &nbsp;·&nbsp; Generated: {analytics.generated_at ? new Date(analytics.generated_at).toLocaleString() : 'N/A'}
+                  &nbsp;·&nbsp; Window: {analytics.window_days} days
+                </p>
+              </>
             )}
           </div>
         )}
@@ -362,4 +650,13 @@ export default function AdminDashboard() {
       </main>
     </div>
   );
+}
+
+// ── Job Status Badge component ────────────
+function JobStatusBadge({ status }) {
+  if (!status)            return <span className="job-badge job-badge-idle">idle</span>;
+  if (status === 'running') return <span className="job-badge job-badge-running">⏳ running</span>;
+  if (status === 'done')    return <span className="job-badge job-badge-done">✅ done</span>;
+  if (status === 'error')   return <span className="job-badge job-badge-error">❌ error</span>;
+  return <span className="job-badge">{status}</span>;
 }

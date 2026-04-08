@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { productAPI, getImageUrl } from '../../utils/api';
+import { productAPI, recommendationsAPI, getImageUrl } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 import useCart from '../../hooks/useCart';
 import Navbar from '../../components/Navbar';
@@ -32,6 +32,8 @@ export default function StorePage() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalProducts, setTotalProducts] = useState(0);
   const [priceRange, setPriceRange] = useState([0, 10000]);
+  const [recommendations, setRecommendations] = useState([]);
+  const [recsFor, setRecsFor] = useState(null); // product name we fetched recs for
 
   useEffect(() => { fetchCategories(); }, []);
   useEffect(() => { fetchProducts(); }, [search, selectedCategory, page]);
@@ -68,6 +70,21 @@ export default function StorePage() {
     const existing = cart.find(i => i.id === product.id);
     addToCartDB(product);
     toast.success(existing ? 'Quantity updated!' : 'Added to cart!');
+    // Fetch PySpark recommendations for this product
+    fetchRecommendations(product);
+  }
+
+  async function fetchRecommendations(product) {
+    try {
+      const res = await recommendationsAPI.getForProduct(product.id);
+      const recs = res.data.recommendations || [];
+      if (recs.length > 0) {
+        setRecommendations(recs);
+        setRecsFor(product.name);
+      }
+    } catch {
+      // Silent — recommendations are optional
+    }
   }
 
   const sorted = [...products].sort((a, b) => {
@@ -193,6 +210,48 @@ export default function StorePage() {
               {sorted.map(p => (
                 <ProductCard key={p.id} product={p} onAddToCart={addToCart} />
               ))}
+            </div>
+          )}
+
+          {/* Recommendations Banner (PySpark "Frequently Bought Together") */}
+          {recommendations.length > 0 && recsFor && (
+            <div className="recs-banner">
+              <div className="recs-banner-header">
+                <span className="recs-badge">🔥 Powered by PySpark</span>
+                <h3>Frequently Bought Together with <em>{recsFor}</em></h3>
+                <button className="recs-close" onClick={() => { setRecommendations([]); setRecsFor(null); }}>×</button>
+              </div>
+              <div className="recs-list">
+                {recommendations.slice(0, 4).map(rec => {
+                  const fullProduct = products.find(p => p.id === rec.product_id);
+                  return (
+                    <div key={rec.product_id} className="rec-card">
+                      <div className="rec-img-wrap">
+                        <img
+                          src={fullProduct ? getImageUrl(fullProduct.thumbnail) : 'https://placehold.co/80x80?text=+'}
+                          alt={rec.product_name}
+                          className="rec-img"
+                          onError={e => { e.target.src = 'https://placehold.co/80x80?text=+'; }}
+                        />
+                      </div>
+                      <div className="rec-info">
+                        <p className="rec-name">{rec.product_name}</p>
+                        {fullProduct && <p className="rec-price">${fullProduct.price.toFixed(2)}</p>}
+                        <span className="rec-score">{rec.score} customers bought together</span>
+                      </div>
+                      {fullProduct && (
+                        <button
+                          className="rec-add-btn"
+                          onClick={() => addToCart(fullProduct)}
+                          disabled={fullProduct.quantity === 0}
+                        >
+                          {fullProduct.quantity === 0 ? 'Sold Out' : '+ Add'}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 

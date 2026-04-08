@@ -91,6 +91,26 @@ export const adminAPI = {
   addProduct:    (data) => API.post('/api/admin/products', data),
   updateProduct: (id, data) => API.put(`/api/admin/products/${id}`, data),
   deleteProduct: (id)   => API.delete(`/api/admin/products/${id}`),
+
+  // ── PySpark Analytics — read results ──────────────────────────────
+  getAnalytics:   (days = 7)  => API.get('/api/admin/analytics/sales', { params: { days } }),
+  getFunnel:      ()           => API.get('/api/admin/analytics/funnel'),
+  getKafkaEvents: (limit = 50) => API.get('/api/admin/analytics/kafka-events', { params: { limit } }),
+
+  // ── Analytics job triggers — run on server ─────────────────────────
+  runSalesReport:      (days = 7) => API.post('/api/admin/analytics/run-sales', { days }),
+  runRecommendations:  ()          => API.post('/api/admin/analytics/run-recommendations'),
+  runFunnel:           ()          => API.post('/api/admin/analytics/run-funnel'),
+  runAllJobs:          (days = 7) => API.post('/api/admin/analytics/run-all', { days }),
+  setupCollections:    ()          => API.post('/api/admin/analytics/setup-collections'),
+  backfillEvents:      ()          => API.post('/api/admin/analytics/backfill'),
+  getJobStatus:        (jobName)   => API.get(`/api/admin/analytics/job-status/${jobName}`),
+  getAllJobStatuses:    ()          => API.get('/api/admin/analytics/job-status'),
+};
+
+// ── Recommendations (PySpark) ─────────────
+export const recommendationsAPI = {
+  getForProduct: (productId) => API.get(`/api/products/recommendations/${productId}`),
 };
 
 // ── Products (public) ────────────────────
